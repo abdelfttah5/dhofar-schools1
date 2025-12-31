@@ -2388,12 +2388,12 @@ export const schoolsData: School[] = [
   // --- مدارس ولاية ثمريت ---
   {
     id: "TH-01",
-    name: "جابر بن حيان (5-12)",
+    name: "جابر بن حيان (9-12)",
     region: Region.THUMRAIT_SECTOR,
     wilayat: Wilayat.THUMRAIT,
     area: "ثمريت",
     type: SchoolType.GOVERNMENT,
-    grades: "5-12",
+    grades: "9-12",
     gender: Gender.BOYS,
     shift: Shift.MORNING,
     coordinates: { lat: 17.6225, lng: 54.0504 },
@@ -2669,10 +2669,10 @@ export const schoolsData: School[] = [
     gender: Gender.BOYS,
     shift: Shift.EVENING,
     coordinates: { lat: 17.6220, lng: 54.0500 },
-    contact: {},
+    contact: { managerName: "هشام الكحالي", phone: "92311300" },
     source: "2025/2026",
     isVerified: true,
-    qualityScore: 3
+    qualityScore: 4
   },
 
   // --- مدارس ولاية مقشن ---

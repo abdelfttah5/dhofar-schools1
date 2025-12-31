@@ -1,31 +1,11 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { School } from "../types";
 
-// Initialize Gemini Client safely
-// Browsers like Chrome/Safari might throw ReferenceError if process is accessed directly without check
-let ai: GoogleGenAI | null = null;
-
-try {
-  let apiKey = 'MISSING_KEY';
-  // @ts-ignore
-  if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-     // @ts-ignore
-     apiKey = process.env.API_KEY;
-  }
-  
-  if (apiKey !== 'MISSING_KEY') {
-     ai = new GoogleGenAI({ apiKey });
-  }
-} catch (error) {
-  console.warn("Gemini AI client failed to initialize:", error);
-}
+// Initialize Gemini Client
+// @ts-ignore
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const askGeminiAdvisor = async (query: string, schools: School[]): Promise<string> => {
-  if (!ai) {
-    return "عذراً، خدمة المساعد الذكي غير متوفرة حالياً (API Key missing).";
-  }
-
   try {
     // Create a simplified context of the data to send to the model
     const contextData = schools.map(s => ({
@@ -50,7 +30,7 @@ export const askGeminiAdvisor = async (query: string, schools: School[]): Promis
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-latest',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
     });
 

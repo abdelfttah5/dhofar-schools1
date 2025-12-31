@@ -1,11 +1,10 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   MapPin, Phone, Search, Filter, Menu, X, CheckCircle, 
   Navigation, School as SchoolIcon, Star, Info, MessageSquare, 
   BarChart3, Globe, ExternalLink, Moon, Sun, Download, ChevronRight,
   Send, Sparkles, LayoutGrid, ListFilter, GraduationCap, Map, Share2, Home, Copy,
-  User, UserCheck, ChevronLeft, Layers
+  User, UserCheck, ChevronLeft, Layers, ChevronDown
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
 import { School, Wilayat, SchoolType, Gender, FilterState, Shift, Region } from './types';
@@ -162,7 +161,7 @@ const DhofarMap = ({ schools, onSelect }: { schools: School[], onSelect: (s: Sch
 
             // Fix for map not rendering correctly until resize
             setTimeout(() => {
-                map.invalidateSize();
+                if(mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
             }, 200);
         }
     }, 100);
@@ -289,7 +288,7 @@ const DhofarMap = ({ schools, onSelect }: { schools: School[], onSelect: (s: Sch
   );
 };
 
-// --- Hierarchy Components ---
+// --- Hierarchy & Drawer Components ---
 
 type HierarchyLevel = 'SECTOR' | 'WILAYAT' | 'CATEGORY' | 'LIST';
 
@@ -310,7 +309,6 @@ const HierarchyView = ({ schools, onSelect, onMap }: { schools: School[], onSele
   const categoriesInWilayat = useMemo(() => {
     if (!selectedWilayat) return [];
     const relevantSchools = schools.filter(s => s.wilayat === selectedWilayat);
-    // Categories: Government (Boys), Government (Girls), Government (Mixed), Private, Kindergarten
     const categories = new Set<string>();
     
     relevantSchools.forEach(s => {
@@ -328,21 +326,16 @@ const HierarchyView = ({ schools, onSelect, onMap }: { schools: School[], onSele
     
     return schools.filter(s => {
       if (s.wilayat !== selectedWilayat) return false;
-      
-      // Check Category
       if (selectedCategory === SchoolType.PRIVATE) return s.type === SchoolType.PRIVATE;
       if (selectedCategory === SchoolType.KINDERGARTEN) return s.type === SchoolType.KINDERGARTEN;
-      
-      // Government Handling
-      if (selectedCategory.startsWith('مدارس حكومية')) {
-         const genderPart = selectedCategory.match(/\(([^)]+)\)/)?.[1]; // Extract "ذكور", "إناث", "مختلط"
+      if (selectedCategory?.startsWith('مدارس حكومية')) {
+         const genderPart = selectedCategory.match(/\(([^)]+)\)/)?.[1];
          return s.type === SchoolType.GOVERNMENT && s.gender === genderPart;
       }
       return false;
     });
   }, [schools, selectedWilayat, selectedCategory]);
 
-  // Renderers
   const renderItem = (label: string, onClick: () => void, count?: number) => (
     <div 
       onClick={onClick}
@@ -350,7 +343,7 @@ const HierarchyView = ({ schools, onSelect, onMap }: { schools: School[], onSele
     >
       <div className="flex items-center gap-4">
         <div className="w-12 h-12 rounded-full bg-dhofar-900/30 flex items-center justify-center text-dhofar-400 group-hover:bg-dhofar-500 group-hover:text-white transition-colors">
-          <ChevronLeft className="w-6 h-6 rotate-180" /> {/* RTL chevron logic */}
+          <ChevronLeft className="w-6 h-6 rotate-180" /> 
         </div>
         <span className="text-lg font-bold text-white">{label}</span>
       </div>
@@ -362,7 +355,6 @@ const HierarchyView = ({ schools, onSelect, onMap }: { schools: School[], onSele
 
   return (
     <div className="animate-fade-in w-full max-w-4xl mx-auto px-2 pb-20">
-      {/* Breadcrumbs */}
       <div className="flex flex-wrap items-center gap-2 mb-6 text-sm text-gray-400 bg-[#1e293b] p-3 rounded-xl border border-[#334155] shadow-sm">
         <button onClick={() => { setLevel('SECTOR'); setSelectedRegion(null); setSelectedWilayat(null); }} className={`hover:text-white transition-colors ${level === 'SECTOR' ? 'text-dhofar-400 font-bold' : ''}`}>القطاعات</button>
         {selectedRegion && (
@@ -414,6 +406,137 @@ const HierarchyView = ({ schools, onSelect, onMap }: { schools: School[], onSele
   );
 };
 
+// --- Accordion & Side Menu Components ---
+
+interface AccordionItemProps {
+  title: string;
+  children: React.ReactNode;
+  isOpen: boolean;
+  onToggle: () => void;
+  count?: number;
+  level?: number;
+}
+
+const AccordionItem: React.FC<AccordionItemProps> = ({ title, children, isOpen, onToggle, count, level = 0 }) => {
+  return (
+    <div className={`border-b border-[#334155] ${level > 0 ? 'bg-black/10' : ''}`}>
+      <button 
+        onClick={onToggle}
+        className={`w-full flex items-center justify-between p-4 text-right transition-colors hover:bg-[#334155]/50 ${isOpen ? 'bg-[#334155]/30' : ''}`}
+        style={{ paddingRight: `${level * 16 + 16}px` }}
+      >
+        <div className="flex items-center gap-3">
+          <span className={`font-bold ${level === 0 ? 'text-base text-white' : 'text-sm text-gray-300'}`}>{title}</span>
+          {count !== undefined && (
+            <span className="px-2 py-0.5 rounded-full bg-[#334155] text-gray-400 text-[10px] font-bold">{count}</span>
+          )}
+        </div>
+        <ChevronLeft className={`w-5 h-5 text-gray-500 transition-transform duration-300 ${isOpen ? '-rotate-90 text-dhofar-500' : ''}`} />
+      </button>
+      <div 
+        className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+};
+
+const SideMenu = ({ isOpen, onClose, schools, onSelectSchool }: { isOpen: boolean, onClose: () => void, schools: School[], onSelectSchool: (s: School) => void }) => {
+  const [expandedSector, setExpandedSector] = useState<string | null>(null);
+  const [expandedWilayat, setExpandedWilayat] = useState<string | null>(null);
+
+  // Grouping schools: Sector -> Wilayat -> List
+  const groupedSchools = useMemo(() => {
+    const groups: Record<string, Record<string, School[]>> = {};
+    schools.forEach(s => {
+      if (!groups[s.region]) groups[s.region] = {};
+      if (!groups[s.region][s.wilayat]) groups[s.region][s.wilayat] = [];
+      groups[s.region][s.wilayat].push(s);
+    });
+    return groups;
+  }, [schools]);
+
+  return (
+    <>
+      {/* Overlay */}
+      <div 
+        className={`fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000] transition-opacity duration-300 ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+        onClick={onClose}
+      />
+      
+      {/* Drawer */}
+      <div className={`fixed top-0 bottom-0 right-0 w-[85vw] max-w-md bg-[#0f172a] border-l border-[#334155] z-[2001] shadow-2xl transform transition-transform duration-300 ease-out flex flex-col ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+        <div className="p-5 border-b border-[#334155] flex items-center justify-between bg-[#1e293b]">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <Layers className="w-6 h-6 text-dhofar-500" />
+            تصفح المدارس
+          </h2>
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-[#334155] text-gray-400 hover:text-white transition-colors">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {Object.entries(groupedSchools).map(([sector, wilayats]) => {
+            // Count total schools in sector
+            const sectorCount = Object.values(wilayats).flat().length;
+            
+            return (
+              <AccordionItem 
+                key={sector} 
+                title={sector} 
+                count={sectorCount}
+                isOpen={expandedSector === sector}
+                onToggle={() => {
+                  setExpandedSector(expandedSector === sector ? null : sector);
+                  setExpandedWilayat(null); // Reset inner accordion when changing sector
+                }}
+              >
+                {Object.entries(wilayats).map(([wilayat, schoolList]) => (
+                  <AccordionItem
+                    key={wilayat}
+                    title={wilayat}
+                    count={schoolList.length}
+                    level={1}
+                    isOpen={expandedWilayat === wilayat}
+                    onToggle={() => setExpandedWilayat(expandedWilayat === wilayat ? null : wilayat)}
+                  >
+                    <div className="bg-black/20 py-2">
+                      {schoolList.map(school => (
+                        <div 
+                          key={school.id}
+                          onClick={() => {
+                            onSelectSchool(school);
+                            onClose();
+                          }}
+                          className="px-8 py-3 text-right hover:bg-dhofar-900/20 cursor-pointer border-r-2 border-transparent hover:border-dhofar-500 transition-all flex items-center justify-between group"
+                        >
+                          <div>
+                            <p className="text-sm font-bold text-gray-300 group-hover:text-white">{school.name}</p>
+                            <p className="text-[10px] text-gray-500">{school.type}</p>
+                          </div>
+                          <ChevronLeft className="w-4 h-4 text-gray-600 group-hover:text-dhofar-500 opacity-0 group-hover:opacity-100 transition-all" />
+                        </div>
+                      ))}
+                    </div>
+                  </AccordionItem>
+                ))}
+              </AccordionItem>
+            );
+          })}
+        </div>
+        
+        <div className="p-4 border-t border-[#334155] bg-[#1e293b]">
+          <p className="text-center text-xs text-gray-500">
+            مدارس محافظة ظفار © 2025
+          </p>
+        </div>
+      </div>
+    </>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -433,6 +556,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'list' | 'hierarchy' | 'map' | 'stats'>('list');
   const [showResults, setShowResults] = useState(false); 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSideMenuOpen, setIsSideMenuOpen] = useState(false);
 
   // Helper
   const showToast = (msg: string) => {
@@ -469,6 +593,25 @@ export default function App() {
     }
   };
 
+  // --- Handle Back Button for Drawer ---
+  useEffect(() => {
+    if (isSideMenuOpen) {
+      // Push state to history stack when drawer opens
+      window.history.pushState({ drawer: true }, '');
+      
+      const handlePopState = (event: PopStateEvent) => {
+        // When back button is pressed, close drawer
+        setIsSideMenuOpen(false);
+      };
+
+      window.addEventListener('popstate', handlePopState);
+
+      return () => {
+        window.removeEventListener('popstate', handlePopState);
+      };
+    }
+  }, [isSideMenuOpen]);
+
   // --- Deep Link Effect ---
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -477,7 +620,6 @@ export default function App() {
       const school = schoolsData.find(s => s.id === sharedId);
       if (school) {
         setSelectedSchool(school);
-        // Do not force list tab, allow deep linking to work within current context if possible, or default to modal open
       }
     }
   }, []);
@@ -597,6 +739,14 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col bg-[#0f172a] text-white font-sans overflow-x-hidden pb-24 md:pb-0">
       
+      {/* Side Menu (Drawer) */}
+      <SideMenu 
+        isOpen={isSideMenuOpen} 
+        onClose={() => setIsSideMenuOpen(false)} 
+        schools={schools}
+        onSelectSchool={setSelectedSchool}
+      />
+
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[1000] bg-dhofar-600 text-white px-6 py-3 rounded-full shadow-2xl animate-fade-in flex items-center gap-2 font-bold w-max max-w-[90vw]">
@@ -606,12 +756,22 @@ export default function App() {
       )}
 
       {/* Header */}
-      <header className="sticky top-0 z-30 bg-[#0f172a]/90 backdrop-blur-xl border-b border-[#1e293b]">
+      <header className="sticky top-0 z-[50] bg-[#0f172a]/90 backdrop-blur-xl border-b border-[#1e293b]">
         <div className="max-w-7xl mx-auto px-4 md:px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-4">
-             <button onClick={handleShareApp} className="p-2.5 rounded-xl border border-[#334155] bg-[#1e293b] text-dhofar-400 hover:bg-[#334155] transition-colors" title="مشاركة التطبيق">
+             {/* Menu Button - Fixed position visual within header for consistency, but works as Drawer trigger */}
+             <button 
+                onClick={() => setIsSideMenuOpen(true)}
+                className="p-2.5 rounded-xl bg-dhofar-600 text-white hover:bg-dhofar-700 transition-colors shadow-lg shadow-dhofar-600/20 active:scale-95"
+                title="القائمة"
+             >
+               <Menu className="w-6 h-6" />
+             </button>
+
+             <button onClick={handleShareApp} className="p-2.5 rounded-xl border border-[#334155] bg-[#1e293b] text-dhofar-400 hover:bg-[#334155] transition-colors hidden sm:block" title="مشاركة التطبيق">
                <Share2 className="w-5 h-5" />
              </button>
+             
              <div className="hidden md:flex bg-[#1e293b] p-1 rounded-xl border border-[#334155]">
                <button onClick={() => setActiveTab('list')} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${activeTab === 'list' ? 'bg-[#334155] text-white' : 'text-gray-400'}`}>الرئيسية</button>
                <button onClick={() => setActiveTab('hierarchy')} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${activeTab === 'hierarchy' ? 'bg-[#334155] text-white' : 'text-gray-400'}`}>المدارس</button>
