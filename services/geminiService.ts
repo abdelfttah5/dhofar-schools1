@@ -1,13 +1,22 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { School } from "../types";
 
 // Initialize Gemini Client safely
-// In some environments, process might not be defined. We handle this to prevent app crashes.
+// Browsers like Chrome/Safari might throw ReferenceError if process is accessed directly without check
 let ai: GoogleGenAI | null = null;
 
 try {
-  const apiKey = (typeof process !== 'undefined' && process.env?.API_KEY) ? process.env.API_KEY : 'MISSING_KEY';
-  ai = new GoogleGenAI({ apiKey });
+  let apiKey = 'MISSING_KEY';
+  // @ts-ignore
+  if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+     // @ts-ignore
+     apiKey = process.env.API_KEY;
+  }
+  
+  if (apiKey !== 'MISSING_KEY') {
+     ai = new GoogleGenAI({ apiKey });
+  }
 } catch (error) {
   console.warn("Gemini AI client failed to initialize:", error);
 }
@@ -19,7 +28,6 @@ export const askGeminiAdvisor = async (query: string, schools: School[]): Promis
 
   try {
     // Create a simplified context of the data to send to the model
-    // We limit fields to save tokens and context window
     const contextData = schools.map(s => ({
       name: s.name,
       type: s.type,
@@ -39,8 +47,6 @@ export const askGeminiAdvisor = async (query: string, schools: School[]): Promis
       بناءً على البيانات أعلاه، أجب على المستخدم باللغة العربية.
       - كن مفيداً ومختصراً.
       - إذا سأل عن مدرسة غير موجودة، قل أنك لا تملك معلومات عنها في قاعدة البيانات الحالية.
-      - اقترح مدارس بديلة إذا كان ذلك مناسباً.
-      - نسق الإجابة بشكل نقاط واضحة.
     `;
 
     const response = await ai.models.generateContent({

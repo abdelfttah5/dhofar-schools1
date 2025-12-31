@@ -1,12 +1,14 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   MapPin, Phone, Search, Filter, Menu, X, CheckCircle, 
   Navigation, School as SchoolIcon, Star, Info, MessageSquare, 
   BarChart3, Globe, ExternalLink, Moon, Sun, Download, ChevronRight,
-  Send, Sparkles, LayoutGrid, ListFilter, GraduationCap, Map, Share2, Home, Copy
+  Send, Sparkles, LayoutGrid, ListFilter, GraduationCap, Map, Share2, Home, Copy,
+  User, UserCheck, ChevronLeft, Layers
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
-import { School, Wilayat, SchoolType, Gender, FilterState, Shift } from './types';
+import { School, Wilayat, SchoolType, Gender, FilterState, Shift, Region } from './types';
 import { schoolsData } from './data';
 import { askGeminiAdvisor } from './services/geminiService';
 
@@ -74,9 +76,9 @@ const SchoolCard: React.FC<{ school: School, onSelect: (s: School) => void, onMa
           </div>
         </div>
 
-        <p className="text-gray-400 text-sm flex items-center gap-1.5 mb-5">
-          <MapPin className="w-4 h-4 text-gray-500" />
-          {school.area || 'المركز'}
+        <p className="text-gray-400 text-xs flex items-center gap-1.5 mb-5 truncate">
+          <MapPin className="w-3 h-3 text-gray-500" />
+          {school.region}
         </p>
 
         <div className="flex flex-wrap gap-2">
@@ -86,6 +88,16 @@ const SchoolCard: React.FC<{ school: School, onSelect: (s: School) => void, onMa
           <Badge color="bg-slate-800 border-slate-700 text-slate-300">
             {school.grades}
           </Badge>
+          {/* PROMINENT GENDER BADGE */}
+          <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${
+            school.gender === Gender.BOYS 
+              ? 'bg-blue-900/20 border-blue-500 text-blue-400' 
+              : school.gender === Gender.GIRLS 
+                ? 'bg-pink-900/20 border-pink-500 text-pink-400' 
+                : 'bg-purple-900/20 border-purple-500 text-purple-400'
+          }`}>
+            {school.gender === Gender.BOYS ? '♂ ذكور' : school.gender === Gender.GIRLS ? '♀ إناث' : '⚥ مشترك'}
+          </span>
         </div>
       </div>
 
@@ -134,7 +146,7 @@ const DhofarMap = ({ schools, onSelect }: { schools: School[], onSelect: (s: Sch
             const map = window.L.map(mapContainerRef.current, {
                 zoomControl: false,
                 attributionControl: false
-            }).setView([17.0150, 54.0920], 11); // Start focused on Salalah
+            }).setView([17.0150, 54.0920], 9); // Start broad view
 
             // Add Zoom Control
             window.L.control.zoom({ position: 'bottomleft' }).addTo(map);
@@ -176,7 +188,8 @@ const DhofarMap = ({ schools, onSelect }: { schools: School[], onSelect: (s: Sch
             const bounds = window.L.latLngBounds([]);
 
             schools.filter(s => s.coordinates).forEach(school => {
-                if (!school.coordinates) return;
+                // Safety check for valid coordinates
+                if (!school.coordinates || typeof school.coordinates.lat !== 'number' || typeof school.coordinates.lng !== 'number') return;
 
                 // Marker Colors
                 const markerColor = school.type === SchoolType.GOVERNMENT ? '#22c55e' : (school.type === SchoolType.PRIVATE ? '#f59e0b' : '#3b82f6');
@@ -212,7 +225,7 @@ const DhofarMap = ({ schools, onSelect }: { schools: School[], onSelect: (s: Sch
                     .bindPopup(`
                         <div dir="rtl" style="font-family: 'Tajawal', sans-serif; text-align: right; min-width: 150px;">
                             <h3 style="margin: 0 0 5px 0; font-size: 16px; font-weight: 800; color: #fff;">${school.name}</h3>
-                            <p style="margin: 0; font-size: 12px; color: #cbd5e1;">${school.area || school.wilayat}</p>
+                            <p style="margin: 0; font-size: 12px; color: #cbd5e1;">${school.wilayat}</p>
                             <span style="
                                 display: inline-block; 
                                 margin-top: 8px; 
@@ -236,7 +249,7 @@ const DhofarMap = ({ schools, onSelect }: { schools: School[], onSelect: (s: Sch
             if (schools.length > 0 && bounds.isValid()) {
                 mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
             } else {
-                mapInstanceRef.current.setView([17.0150, 54.0920], 11);
+                mapInstanceRef.current.setView([17.0150, 54.0920], 9);
             }
         }
     }, 100);
@@ -276,6 +289,131 @@ const DhofarMap = ({ schools, onSelect }: { schools: School[], onSelect: (s: Sch
   );
 };
 
+// --- Hierarchy Components ---
+
+type HierarchyLevel = 'SECTOR' | 'WILAYAT' | 'CATEGORY' | 'LIST';
+
+const HierarchyView = ({ schools, onSelect, onMap }: { schools: School[], onSelect: (s: School) => void, onMap: (s: School) => void }) => {
+  const [level, setLevel] = useState<HierarchyLevel>('SECTOR');
+  const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
+  const [selectedWilayat, setSelectedWilayat] = useState<Wilayat | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
+  // Grouping Logic
+  const sectors = useMemo(() => Array.from(new Set(schools.map(s => s.region))), [schools]);
+  
+  const wilayatsInRegion = useMemo(() => {
+    if (!selectedRegion) return [];
+    return Array.from(new Set(schools.filter(s => s.region === selectedRegion).map(s => s.wilayat)));
+  }, [schools, selectedRegion]);
+
+  const categoriesInWilayat = useMemo(() => {
+    if (!selectedWilayat) return [];
+    const relevantSchools = schools.filter(s => s.wilayat === selectedWilayat);
+    // Categories: Government (Boys), Government (Girls), Government (Mixed), Private, Kindergarten
+    const categories = new Set<string>();
+    
+    relevantSchools.forEach(s => {
+      if (s.type === SchoolType.GOVERNMENT) {
+        categories.add(`مدارس حكومية (${s.gender})`);
+      } else {
+        categories.add(s.type);
+      }
+    });
+    return Array.from(categories);
+  }, [schools, selectedWilayat]);
+
+  const finalSchoolList = useMemo(() => {
+    if (!selectedWilayat || !selectedCategory) return [];
+    
+    return schools.filter(s => {
+      if (s.wilayat !== selectedWilayat) return false;
+      
+      // Check Category
+      if (selectedCategory === SchoolType.PRIVATE) return s.type === SchoolType.PRIVATE;
+      if (selectedCategory === SchoolType.KINDERGARTEN) return s.type === SchoolType.KINDERGARTEN;
+      
+      // Government Handling
+      if (selectedCategory.startsWith('مدارس حكومية')) {
+         const genderPart = selectedCategory.match(/\(([^)]+)\)/)?.[1]; // Extract "ذكور", "إناث", "مختلط"
+         return s.type === SchoolType.GOVERNMENT && s.gender === genderPart;
+      }
+      return false;
+    });
+  }, [schools, selectedWilayat, selectedCategory]);
+
+  // Renderers
+  const renderItem = (label: string, onClick: () => void, count?: number) => (
+    <div 
+      onClick={onClick}
+      className="p-6 bg-[#1e293b] rounded-2xl border border-[#334155] flex items-center justify-between cursor-pointer hover:bg-[#334155] transition-all group animate-slide-up"
+    >
+      <div className="flex items-center gap-4">
+        <div className="w-12 h-12 rounded-full bg-dhofar-900/30 flex items-center justify-center text-dhofar-400 group-hover:bg-dhofar-500 group-hover:text-white transition-colors">
+          <ChevronLeft className="w-6 h-6 rotate-180" /> {/* RTL chevron logic */}
+        </div>
+        <span className="text-lg font-bold text-white">{label}</span>
+      </div>
+      {count !== undefined && (
+        <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 text-xs font-bold">{count}</span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="animate-fade-in w-full max-w-4xl mx-auto px-2 pb-20">
+      {/* Breadcrumbs */}
+      <div className="flex flex-wrap items-center gap-2 mb-6 text-sm text-gray-400 bg-[#1e293b] p-3 rounded-xl border border-[#334155] shadow-sm">
+        <button onClick={() => { setLevel('SECTOR'); setSelectedRegion(null); setSelectedWilayat(null); }} className={`hover:text-white transition-colors ${level === 'SECTOR' ? 'text-dhofar-400 font-bold' : ''}`}>القطاعات</button>
+        {selectedRegion && (
+          <>
+            <ChevronLeft className="w-4 h-4" />
+            <button onClick={() => { setLevel('WILAYAT'); setSelectedWilayat(null); }} className={`hover:text-white transition-colors ${level === 'WILAYAT' ? 'text-dhofar-400 font-bold' : ''}`}>{selectedRegion}</button>
+          </>
+        )}
+        {selectedWilayat && (
+          <>
+            <ChevronLeft className="w-4 h-4" />
+            <button onClick={() => { setLevel('CATEGORY'); setSelectedCategory(null); }} className={`hover:text-white transition-colors ${level === 'CATEGORY' ? 'text-dhofar-400 font-bold' : ''}`}>{selectedWilayat}</button>
+          </>
+        )}
+        {selectedCategory && (
+          <>
+            <ChevronLeft className="w-4 h-4" />
+            <span className="text-dhofar-400 font-bold">{selectedCategory}</span>
+          </>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        {level === 'SECTOR' && sectors.map(sector => (
+          renderItem(sector, () => { setSelectedRegion(sector); setLevel('WILAYAT'); }, schools.filter(s => s.region === sector).length)
+        ))}
+
+        {level === 'WILAYAT' && wilayatsInRegion.map(w => (
+          renderItem(w, () => { setSelectedWilayat(w); setLevel('CATEGORY'); }, schools.filter(s => s.region === selectedRegion && s.wilayat === w).length)
+        ))}
+
+        {level === 'CATEGORY' && categoriesInWilayat.map(cat => (
+          renderItem(cat, () => { setSelectedCategory(cat); setLevel('LIST'); })
+        ))}
+
+        {level === 'LIST' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
+            {finalSchoolList.length > 0 ? (
+                finalSchoolList.map(s => (
+                <SchoolCard key={s.id} school={s} onSelect={onSelect} onMap={onMap} />
+                ))
+            ) : (
+                <div className="col-span-full text-center py-10 text-gray-500">لا توجد مدارس في هذه الفئة</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -286,12 +424,13 @@ export default function App() {
   const [schools, setSchools] = useState<School[]>(schoolsData);
   const [filters, setFilters] = useState<FilterState>({
     query: '',
+    region: 'All', // New Region Filter
     wilayat: 'All',
     type: 'All',
     gender: 'All'
   });
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
-  const [activeTab, setActiveTab] = useState<'list' | 'map' | 'stats' | 'gemini'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'hierarchy' | 'map' | 'stats'>('list');
   const [showResults, setShowResults] = useState(false); 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -331,7 +470,6 @@ export default function App() {
   };
 
   // --- Deep Link Effect ---
-  // Checks URL params on load to open a specific school
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sharedId = params.get('schoolId');
@@ -339,8 +477,7 @@ export default function App() {
       const school = schoolsData.find(s => s.id === sharedId);
       if (school) {
         setSelectedSchool(school);
-        // Optionally switch to list view if not already
-        setActiveTab('list');
+        // Do not force list tab, allow deep linking to work within current context if possible, or default to modal open
       }
     }
   }, []);
@@ -364,14 +501,14 @@ export default function App() {
     // 1. Filter
     const list = schools.filter(school => {
       const matchesQuery = school.name.includes(filters.query) || school.area?.includes(filters.query);
+      const matchesRegion = filters.region === 'All' || school.region === filters.region;
       const matchesWilayat = filters.wilayat === 'All' || school.wilayat === filters.wilayat;
       const matchesType = filters.type === 'All' || school.type === filters.type;
       const matchesGender = filters.gender === 'All' || school.gender === filters.gender;
-      return matchesQuery && matchesWilayat && matchesType && matchesGender;
+      return matchesQuery && matchesRegion && matchesWilayat && matchesType && matchesGender;
     });
 
     // 2. Sort Logic for Better Search Experience
-    // Priority: Exact Match > Starts With > Contains
     if (filters.query) {
       return list.sort((a, b) => {
         const query = filters.query.trim();
@@ -396,9 +533,9 @@ export default function App() {
   // Statistics Counts
   const stats = useMemo(() => ({
     total: schools.length,
-    salalah: schools.filter(s => s.wilayat === Wilayat.SALALAH).length,
-    thumrait: schools.filter(s => s.wilayat === Wilayat.THUMRAIT).length,
-    rakhyut: schools.filter(s => s.wilayat === Wilayat.RAKHYUT).length,
+    salalahSector: schools.filter(s => s.region === Region.SALALAH_SECTOR).length,
+    thumraitSector: schools.filter(s => s.region === Region.THUMRAIT_SECTOR).length,
+    rakhyutSector: schools.filter(s => s.region === Region.RAKHYUT_SECTOR).length,
   }), [schools]);
 
   // Chart Data
@@ -414,8 +551,8 @@ export default function App() {
   const COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#ef4444'];
 
   // Handlers
-  const handleStatClick = (wilayat: Wilayat | 'All') => {
-    setFilters(prev => ({ ...prev, wilayat: wilayat }));
+  const handleStatClick = (region: Region | 'All') => {
+    setFilters(prev => ({ ...prev, region: region, wilayat: 'All' }));
     setShowResults(true);
     // Switch to list view if not already
     setActiveTab('list');
@@ -445,6 +582,18 @@ export default function App() {
     if (e.target.value.length > 0) setShowResults(true);
   };
 
+  // Generate Wilayat Options based on selected Region
+  const availableWilayats = useMemo(() => {
+    if (filters.region === 'All') return Object.values(Wilayat);
+    
+    // Group mappings
+    if (filters.region === Region.SALALAH_SECTOR) return [Wilayat.SALALAH, Wilayat.TAQAH, Wilayat.MIRBAT, Wilayat.SADAH];
+    if (filters.region === Region.THUMRAIT_SECTOR) return [Wilayat.THUMRAIT, Wilayat.AL_MAZYUNAH, Wilayat.MUQSHIN, Wilayat.SHALIM_HALLANIYAT];
+    if (filters.region === Region.RAKHYUT_SECTOR) return [Wilayat.RAKHYUT, Wilayat.DHALKUT];
+    
+    return [];
+  }, [filters.region]);
+
   return (
     <div className="min-h-screen flex flex-col bg-[#0f172a] text-white font-sans overflow-x-hidden pb-24 md:pb-0">
       
@@ -465,6 +614,7 @@ export default function App() {
              </button>
              <div className="hidden md:flex bg-[#1e293b] p-1 rounded-xl border border-[#334155]">
                <button onClick={() => setActiveTab('list')} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${activeTab === 'list' ? 'bg-[#334155] text-white' : 'text-gray-400'}`}>الرئيسية</button>
+               <button onClick={() => setActiveTab('hierarchy')} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${activeTab === 'hierarchy' ? 'bg-[#334155] text-white' : 'text-gray-400'}`}>المدارس</button>
                <button onClick={() => setActiveTab('map')} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${activeTab === 'map' ? 'bg-[#334155] text-white' : 'text-gray-400'}`}>الخريطة</button>
                <button onClick={() => setActiveTab('stats')} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${activeTab === 'stats' ? 'bg-[#334155] text-white' : 'text-gray-400'}`}>الإحصائيات</button>
              </div>
@@ -499,7 +649,7 @@ export default function App() {
                   </h1>
                   {/* Updated Text */}
                   <p className="text-lg md:text-2xl text-gray-300 max-w-2xl mx-auto font-bold leading-relaxed px-4">
-                    اكتشف مدارس محافظة ظفار
+                    اكتشف المدارس في جميع ولايات المحافظة
                   </p>
                 </div>
 
@@ -511,7 +661,7 @@ export default function App() {
                   <input 
                     type="text" 
                     className="w-full h-14 md:h-16 pr-12 md:pr-14 pl-6 rounded-2xl bg-[#1e293b] border border-[#334155] focus:border-dhofar-500 focus:ring-1 focus:ring-dhofar-500 text-base md:text-lg text-white placeholder:text-gray-500 transition-all"
-                    placeholder="ابحث عن مدرسة بالاسم أو المنطقة..."
+                    placeholder="ابحث عن مدرسة بالاسم أو المدير..."
                     value={filters.query}
                     onChange={handleSearch}
                   />
@@ -531,34 +681,34 @@ export default function App() {
                 </div>
             </div>
 
-            {/* Stats Grid - Reordered: Salalah (Right), Thumrait, Rakhyut, Total */}
+            {/* Stats Grid - Updated to Regions */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 animate-slide-up px-2" style={{animationDelay: '0.3s'}}>
                 <StatCard 
-                  label="صلالة" 
-                  value={stats.salalah} 
+                  label="قطاع صلالة" 
+                  value={stats.salalahSector} 
                   icon={MapPin} 
                   colorClass="bg-teal-500 text-teal-400" 
-                  subLabel="المركز والنيابات"
-                  onClick={() => handleStatClick(Wilayat.SALALAH)}
-                  isActive={filters.wilayat === Wilayat.SALALAH}
+                  subLabel="طاقة، مرباط، سدح"
+                  onClick={() => handleStatClick(Region.SALALAH_SECTOR)}
+                  isActive={filters.region === Region.SALALAH_SECTOR}
                 />
                 <StatCard 
-                  label="ثمريت" 
-                  value={stats.thumrait} 
+                  label="قطاع ثمريت" 
+                  value={stats.thumraitSector} 
                   icon={MapPin} 
                   colorClass="bg-amber-500 text-amber-400" 
-                  subLabel="والبادية"
-                  onClick={() => handleStatClick(Wilayat.THUMRAIT)}
-                  isActive={filters.wilayat === Wilayat.THUMRAIT}
+                  subLabel="المزيونة، مقشن، شليم"
+                  onClick={() => handleStatClick(Region.THUMRAIT_SECTOR)}
+                  isActive={filters.region === Region.THUMRAIT_SECTOR}
                 />
                 <StatCard 
-                  label="رخيوت" 
-                  value={stats.rakhyut} 
+                  label="قطاع رخيوت" 
+                  value={stats.rakhyutSector} 
                   icon={MapPin} 
                   colorClass="bg-indigo-500 text-indigo-400" 
-                  subLabel="والجبال"
-                  onClick={() => handleStatClick(Wilayat.RAKHYUT)}
-                  isActive={filters.wilayat === Wilayat.RAKHYUT}
+                  subLabel="يشمل ضلكوت"
+                  onClick={() => handleStatClick(Region.RAKHYUT_SECTOR)}
+                  isActive={filters.region === Region.RAKHYUT_SECTOR}
                 />
                  <StatCard 
                   label="إجمالي المدارس" 
@@ -567,23 +717,41 @@ export default function App() {
                   colorClass="bg-dhofar-500 text-dhofar-400" 
                   subLabel="في قاعدة البيانات"
                   onClick={() => handleStatClick('All')}
-                  isActive={filters.wilayat === 'All'}
+                  isActive={filters.region === 'All'}
                 />
             </div>
 
             {/* Results Section */}
             {showResults && (
               <div id="results-section" className="mt-16 animate-fade-in px-2">
+                
+                {/* Wilayat Sub-filter (appears if a region is selected or just generally available) */}
+                <div className="mb-8 overflow-x-auto pb-2 custom-scrollbar">
+                  <div className="flex items-center gap-2 min-w-max">
+                    <span className="text-sm font-bold text-gray-400 ml-2">تصفية حسب الولاية:</span>
+                    <button 
+                      onClick={() => setFilters(prev => ({ ...prev, wilayat: 'All' }))}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${filters.wilayat === 'All' ? 'bg-dhofar-600 text-white border-dhofar-500' : 'bg-[#1e293b] text-gray-400 border-[#334155]'}`}
+                    >
+                      الكل
+                    </button>
+                    {availableWilayats.map(w => (
+                      <button 
+                        key={w}
+                        onClick={() => setFilters(prev => ({ ...prev, wilayat: w }))}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${filters.wilayat === w ? 'bg-dhofar-600 text-white border-dhofar-500' : 'bg-[#1e293b] text-gray-400 border-[#334155]'}`}
+                      >
+                        {w}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between mb-6">
                     <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
                       <LayoutGrid className="w-6 h-6 text-dhofar-500" />
                       قائمة المدارس <span className="text-base font-normal text-gray-400 bg-[#1e293b] px-3 py-1 rounded-full">{filteredSchools.length}</span>
                     </h2>
-                    {filters.wilayat !== 'All' && (
-                      <button onClick={() => setFilters(prev => ({...prev, wilayat: 'All'}))} className="text-sm text-dhofar-400 hover:text-dhofar-300">
-                        عرض الكل
-                      </button>
-                    )}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -599,7 +767,7 @@ export default function App() {
                     </div>
                     <h3 className="text-lg font-bold text-white mb-1">لا توجد مدارس مطابقة</h3>
                     <button 
-                      onClick={() => setFilters({ query: '', wilayat: 'All', type: 'All', gender: 'All' })}
+                      onClick={() => setFilters({ query: '', region: 'All', wilayat: 'All', type: 'All', gender: 'All' })}
                       className="text-dhofar-400 font-bold hover:underline text-sm mt-2"
                     >
                       عرض جميع المدارس
@@ -609,6 +777,14 @@ export default function App() {
               </div>
             )}
           </>
+        )}
+
+        {/* VIEW: HIERARCHY (SCHOOLS) */}
+        {activeTab === 'hierarchy' && (
+          <div className="animate-fade-in space-y-6">
+            <h2 className="text-2xl font-bold text-white mb-4 px-2">تصفح المدارس حسب القطاعات</h2>
+            <HierarchyView schools={schools} onSelect={setSelectedSchool} onMap={handleOpenMap} />
+          </div>
         )}
 
         {/* VIEW: MAP */}
@@ -670,6 +846,14 @@ export default function App() {
             <Home className="w-6 h-6" />
             <span className="text-[10px] font-bold">الرئيسية</span>
           </button>
+
+          <button 
+            onClick={() => setActiveTab('hierarchy')}
+            className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-colors ${activeTab === 'hierarchy' ? 'text-dhofar-500 bg-dhofar-500/10' : 'text-gray-400 hover:text-gray-300'}`}
+          >
+            <Layers className="w-6 h-6" />
+            <span className="text-[10px] font-bold">المدارس</span>
+          </button>
           
           <button 
             onClick={() => setActiveTab('map')}
@@ -689,12 +873,12 @@ export default function App() {
         </div>
       </div>
 
-      {/* Detail Modal */}
+      {/* Detail Modal - Ensure High Z-Index and Fixed Positioning */}
       {selectedSchool && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm transition-opacity animate-fade-in" onClick={() => setSelectedSchool(null)}>
-          <div className="bg-[#1e293b] w-full max-w-lg rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl transform transition-transform animate-slide-up border border-[#334155]" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm transition-opacity animate-fade-in" onClick={() => setSelectedSchool(null)}>
+          <div className="bg-[#1e293b] w-full max-w-lg rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl transform transition-transform animate-slide-up border border-[#334155] max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
             
-            <div className="relative h-36 bg-dhofar-800 overflow-hidden">
+            <div className="relative h-32 bg-dhofar-800 shrink-0">
                <div className="absolute inset-0 bg-gradient-to-t from-[#1e293b] to-transparent z-10"></div>
                <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
                
@@ -702,7 +886,7 @@ export default function App() {
                 <X className="w-5 h-5" />
               </button>
 
-               {/* Add Share Button in Modal Header */}
+               {/* Share Button in Modal Header */}
                <button 
                  onClick={(e) => { e.stopPropagation(); handleShareSchool(selectedSchool); }} 
                  className="absolute top-4 right-4 z-20 bg-black/40 text-white p-2 rounded-full hover:bg-black/60 backdrop-blur-sm transition-colors"
@@ -712,79 +896,98 @@ export default function App() {
                </button>
             </div>
 
-            <div className="px-6 pb-8 -mt-16 relative z-20">
+            <div className="px-6 pb-8 -mt-12 relative z-20 overflow-y-auto custom-scrollbar flex-1">
               <div className="bg-[#0f172a] rounded-3xl shadow-xl p-6 border border-[#334155] mb-6">
                 <div className="flex justify-between items-start">
                   <div>
-                    <h2 className="text-2xl font-extrabold text-white mb-2">{selectedSchool.name}</h2>
+                    <h2 className="text-2xl font-extrabold text-white mb-2 leading-tight">{selectedSchool.name}</h2>
                     <p className="text-gray-400 flex items-center gap-1.5 text-sm font-medium">
                       <MapPin className="w-4 h-4 text-dhofar-500" />
                       {selectedSchool.wilayat}، {selectedSchool.area || 'المركز'}
                     </p>
                   </div>
-                  <div className="w-14 h-14 bg-dhofar-900/50 rounded-2xl flex items-center justify-center text-dhofar-400 shadow-sm border border-dhofar-900">
-                    <SchoolIcon className="w-8 h-8" />
+                  <div className="w-12 h-12 bg-dhofar-900/50 rounded-2xl flex items-center justify-center text-dhofar-400 shadow-sm border border-dhofar-900 shrink-0">
+                    <SchoolIcon className="w-7 h-7" />
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-6 max-h-[50vh] overflow-y-auto custom-scrollbar px-1">
+              <div className="space-y-6">
                 {/* Details Grid */}
                 <div className="grid grid-cols-2 gap-3">
-                   <div className="bg-[#334155]/50 p-4 rounded-2xl border border-[#475569]">
-                     <p className="text-xs font-bold text-gray-400 mb-1">المرحلة الدراسية</p>
-                     <p className="font-bold text-gray-100">{selectedSchool.grades}</p>
+                   <div className="bg-[#334155]/50 p-3 rounded-2xl border border-[#475569]">
+                     <p className="text-[10px] font-bold text-gray-400 mb-1">المرحلة الدراسية</p>
+                     <p className="font-bold text-sm text-gray-100">{selectedSchool.grades}</p>
                    </div>
-                   <div className="bg-[#334155]/50 p-4 rounded-2xl border border-[#475569]">
-                     <p className="text-xs font-bold text-gray-400 mb-1">الجنس</p>
-                     <p className="font-bold text-gray-100">{selectedSchool.gender}</p>
+                   <div className="bg-[#334155]/50 p-3 rounded-2xl border border-[#475569]">
+                     <p className="text-[10px] font-bold text-gray-400 mb-1">الجنس</p>
+                     <p className="font-bold text-sm text-gray-100">{selectedSchool.gender}</p>
                    </div>
-                   <div className="bg-[#334155]/50 p-4 rounded-2xl border border-[#475569]">
-                     <p className="text-xs font-bold text-gray-400 mb-1">وقت الدوام</p>
-                     <p className="font-bold text-gray-100">{selectedSchool.shift}</p>
+                   <div className="bg-[#334155]/50 p-3 rounded-2xl border border-[#475569]">
+                     <p className="text-[10px] font-bold text-gray-400 mb-1">وقت الدوام</p>
+                     <p className="font-bold text-sm text-gray-100">{selectedSchool.shift}</p>
                    </div>
-                   <div className="bg-[#334155]/50 p-4 rounded-2xl border border-[#475569]">
-                     <p className="text-xs font-bold text-gray-400 mb-1">النوع</p>
-                     <p className="font-bold text-gray-100">{selectedSchool.type}</p>
+                   <div className="bg-[#334155]/50 p-3 rounded-2xl border border-[#475569]">
+                     <p className="text-[10px] font-bold text-gray-400 mb-1">النوع</p>
+                     <p className="font-bold text-sm text-gray-100">{selectedSchool.type}</p>
                    </div>
                 </div>
 
-                {/* Additional Info */}
-                {selectedSchool.contact?.managerName && (
-                  <div className="flex items-center gap-4 p-4 bg-indigo-900/20 rounded-2xl border border-indigo-900/50">
-                    <div className="p-3 bg-indigo-900/50 rounded-full text-indigo-300 shadow-sm">
-                      <Star className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-indigo-400 mb-0.5">مدير المدرسة</p>
-                      <p className="text-sm font-bold text-indigo-100">{selectedSchool.contact.managerName}</p>
-                    </div>
+                {/* Additional Info (Manager & Assistant) */}
+                {(selectedSchool.contact?.managerName || selectedSchool.contact?.assistantName) && (
+                  <div className="space-y-3">
+                    {selectedSchool.contact?.managerName && (
+                        <div className="flex items-start gap-3 p-4 bg-indigo-900/20 rounded-2xl border border-indigo-900/50">
+                            <div className="p-2 bg-indigo-900/50 rounded-full text-indigo-300 shadow-sm mt-1">
+                            <User className="w-4 h-4" />
+                            </div>
+                            <div className="flex-1">
+                            <p className="text-xs font-bold text-indigo-400 mb-0.5">مدير المدرسة</p>
+                            <p className="text-sm font-bold text-indigo-100">{selectedSchool.contact.managerName}</p>
+                            {selectedSchool.contact.phone && <p className="text-xs text-gray-400 mt-1 font-mono" dir="ltr">{selectedSchool.contact.phone}</p>}
+                            </div>
+                        </div>
+                    )}
+                    
+                    {selectedSchool.contact?.assistantName && (
+                        <div className="flex items-start gap-3 p-4 bg-slate-800/40 rounded-2xl border border-slate-700">
+                            <div className="p-2 bg-slate-800 rounded-full text-slate-400 shadow-sm mt-1">
+                            <UserCheck className="w-4 h-4" />
+                            </div>
+                            <div className="flex-1">
+                            <p className="text-xs font-bold text-slate-400 mb-0.5">مساعد المدير</p>
+                            <p className="text-sm font-bold text-slate-200">{selectedSchool.contact.assistantName}</p>
+                            {selectedSchool.contact.assistantPhone && <p className="text-xs text-gray-500 mt-1 font-mono" dir="ltr">{selectedSchool.contact.assistantPhone}</p>}
+                            </div>
+                        </div>
+                    )}
                   </div>
                 )}
 
                 {/* Actions */}
-                <div className="space-y-3 pt-2">
+                <div className="space-y-3 pt-2 pb-4">
                    <div className="flex gap-3">
                       <button 
                           onClick={() => handleOpenMap(selectedSchool)}
-                          className="flex-1 flex items-center justify-center gap-2 bg-dhofar-600 text-white font-bold py-4 rounded-2xl hover:bg-dhofar-700 transition-all shadow-lg shadow-dhofar-600/20 active:scale-[0.98]"
+                          className="flex-1 flex items-center justify-center gap-2 bg-dhofar-600 text-white font-bold py-3.5 rounded-2xl hover:bg-dhofar-700 transition-all shadow-lg shadow-dhofar-600/20 active:scale-[0.98]"
                       >
                         <Navigation className="w-5 h-5" />
                         <span className="text-sm">خرائط جوجل</span>
                       </button>
-
-                      <button 
-                          onClick={() => handleShareSchool(selectedSchool)}
-                          className="flex items-center justify-center gap-2 px-6 bg-[#334155] text-white font-bold py-4 rounded-2xl border border-[#475569] hover:border-dhofar-500 hover:bg-[#475569] transition-all active:scale-[0.98]"
-                      >
-                        <Share2 className="w-5 h-5" />
-                      </button>
                    </div>
                    
+                   {/* Call Buttons */}
                    {selectedSchool.contact?.phone && (
-                      <a href={`tel:${selectedSchool.contact.phone}`} className="w-full flex items-center justify-center gap-3 bg-[#334155] text-white font-bold py-4 rounded-2xl border border-[#475569] hover:border-dhofar-500 hover:bg-[#475569] transition-all active:scale-[0.98]">
+                      <a href={`tel:${selectedSchool.contact.phone}`} className="w-full flex items-center justify-center gap-3 bg-[#334155] text-white font-bold py-3.5 rounded-2xl border border-[#475569] hover:border-dhofar-500 hover:bg-[#475569] transition-all active:scale-[0.98]">
                         <Phone className="w-5 h-5" />
-                        اتصال ({selectedSchool.contact.phone})
+                        اتصال بالمدير ({selectedSchool.contact.phone})
+                      </a>
+                   )}
+                   
+                   {selectedSchool.contact?.assistantPhone && (
+                      <a href={`tel:${selectedSchool.contact.assistantPhone}`} className="w-full flex items-center justify-center gap-3 bg-[#334155] text-white font-bold py-3.5 rounded-2xl border border-[#475569] hover:border-dhofar-500 hover:bg-[#475569] transition-all active:scale-[0.98]">
+                        <Phone className="w-5 h-5" />
+                        اتصال بالمساعد ({selectedSchool.contact.assistantPhone})
                       </a>
                    )}
                 </div>

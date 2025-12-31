@@ -1,13 +1,33 @@
+
 export enum SchoolType {
   GOVERNMENT = 'حكومي',
   PRIVATE = 'خاص',
   KINDERGARTEN = 'روضة'
 }
 
+// Regions based on geographic sectors
+export enum Region {
+  SALALAH_SECTOR = 'قطاع صلالة',
+  THUMRAIT_SECTOR = 'قطاع ثمريت',
+  RAKHYUT_SECTOR = 'قطاع رخيوت'
+}
+
 export enum Wilayat {
+  // Salalah Sector
   SALALAH = 'صلالة',
+  TAQAH = 'طاقة',
+  MIRBAT = 'مرباط',
+  SADAH = 'سدح',
+  
+  // Thumrait Sector
   THUMRAIT = 'ثمريت',
-  RAKHYUT = 'رخيوت'
+  AL_MAZYUNAH = 'المزيونة',
+  MUQSHIN = 'مقشن',
+  SHALIM_HALLANIYAT = 'شليم وجزر الحلانيات',
+  
+  // Rakhyut Sector
+  RAKHYUT = 'رخيوت',
+  DHALKUT = 'ضلكوت'
 }
 
 export enum Shift {
@@ -17,8 +37,8 @@ export enum Shift {
 }
 
 export enum Gender {
-  BOYS = 'بنين',
-  GIRLS = 'بنات',
+  BOYS = 'ذكور',
+  GIRLS = 'إناث',
   MIXED = 'مختلط'
 }
 
@@ -30,6 +50,8 @@ export interface Coordinates {
 export interface ContactInfo {
   phone?: string;
   managerName?: string;
+  assistantName?: string;
+  assistantPhone?: string;
   email?: string;
   website?: string;
 }
@@ -37,21 +59,23 @@ export interface ContactInfo {
 export interface School {
   id: string;
   name: string;
+  region: Region;
   wilayat: Wilayat;
-  area?: string; // e.g. Sahalnout, Auqad
+  area?: string; 
   type: SchoolType;
-  grades: string; // e.g. "1-4", "5-10"
+  grades: string;
   gender: Gender;
   shift: Shift;
   coordinates?: Coordinates;
   contact: ContactInfo;
-  qualityScore: number; // 0-5 based on data completeness
+  qualityScore: number;
   source: string;
   isVerified: boolean;
 }
 
 export interface FilterState {
   query: string;
+  region: Region | 'All';
   wilayat: Wilayat | 'All';
   type: SchoolType | 'All';
   gender: Gender | 'All';
