@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   MapPin, Phone, Search, Filter, Menu, X, CheckCircle, 
@@ -529,7 +530,7 @@ const SideMenu = ({ isOpen, onClose, schools, onSelectSchool }: { isOpen: boolea
         
         <div className="p-4 border-t border-[#334155] bg-[#1e293b]">
           <p className="text-center text-xs text-gray-500">
-            مدارس محافظة ظفار © 2025
+            تعليمية ظفار © 2026
           </p>
         </div>
       </div>
@@ -680,21 +681,43 @@ export default function App() {
     rakhyutSector: schools.filter(s => s.region === Region.RAKHYUT_SECTOR).length,
   }), [schools]);
 
+  // Separate Memo for Stats Chart Data
+  // This calculates stats based on CURRENT Filters EXCEPT Type filter.
+  // This ensures that even if you selected "Government", the chart shows the breakdown of Govt/Private/KG for the selected Region/Wilayat.
+  const schoolsForStats = useMemo(() => {
+    return schools.filter(school => {
+      const matchesQuery = school.name.includes(filters.query) || school.area?.includes(filters.query);
+      const matchesRegion = filters.region === 'All' || school.region === filters.region;
+      const matchesWilayat = filters.wilayat === 'All' || school.wilayat === filters.wilayat;
+      // Ignore Type filter
+      const matchesGender = filters.gender === 'All' || school.gender === filters.gender;
+      return matchesQuery && matchesRegion && matchesWilayat && matchesGender;
+    });
+  }, [schools, filters.query, filters.region, filters.wilayat, filters.gender]);
+
   // Chart Data
   const chartData = useMemo(() => {
-    const typeCount = filteredSchools.reduce((acc, curr) => {
+    const typeCount = schoolsForStats.reduce((acc, curr) => {
       acc[curr.type] = (acc[curr.type] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
     return Object.keys(typeCount).map(key => ({ name: key, value: typeCount[key] }));
-  }, [filteredSchools]);
+  }, [schoolsForStats]);
 
   const COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#ef4444'];
 
   // Handlers
   const handleStatClick = (region: Region | 'All') => {
-    setFilters(prev => ({ ...prev, region: region, wilayat: 'All' }));
+    // Determine Default Type: If a specific region is selected, default to GOVERNMENT. If 'All' (Total), show 'All'.
+    const defaultType = region === 'All' ? 'All' : SchoolType.GOVERNMENT;
+
+    setFilters(prev => ({ 
+      ...prev, 
+      region: region, 
+      wilayat: 'All',
+      type: defaultType // Apply default type logic
+    }));
     setShowResults(true);
     // Switch to list view if not already
     setActiveTab('list');
@@ -972,9 +995,27 @@ export default function App() {
                       data={chartData}
                       cx="50%"
                       cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      outerRadius={120}
+                      labelLine={{ stroke: '#64748b', strokeWidth: 1 }}
+                      label={({ cx, cy, midAngle, innerRadius, outerRadius, percent, index, name }) => {
+                        const RADIAN = Math.PI / 180;
+                        const radius = outerRadius * 1.2;
+                        const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                        const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                      
+                        return (
+                          <text 
+                            x={x} 
+                            y={y} 
+                            fill="#cbd5e1" 
+                            textAnchor={x > cx ? 'start' : 'end'} 
+                            dominantBaseline="central"
+                            className="text-xs font-bold"
+                          >
+                            {`${name} ${(percent * 100).toFixed(0)}%`}
+                          </text>
+                        );
+                      }}
+                      outerRadius={100}
                       fill="#8884d8"
                       dataKey="value"
                     >
@@ -982,8 +1023,22 @@ export default function App() {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} strokeWidth={2} stroke="#1e293b" />
                       ))}
                     </Pie>
-                    <RechartsTooltip contentStyle={{ borderRadius: '12px', border: 'none', backgroundColor: '#0f172a', color: '#fff' }} />
-                    <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                    <RechartsTooltip 
+                      contentStyle={{ 
+                        borderRadius: '12px', 
+                        border: '1px solid #334155', 
+                        backgroundColor: '#0f172a', 
+                        color: '#f1f5f9',
+                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
+                      }} 
+                      itemStyle={{ color: '#e2e8f0' }}
+                    />
+                    <Legend 
+                      verticalAlign="bottom" 
+                      height={36} 
+                      iconType="circle" 
+                      wrapperStyle={{ paddingTop: '10px' }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
